@@ -5,22 +5,22 @@ set -e
 # -----------------------------
 # 1. Install requirements
 # -----------------------------
-sudo apt update
-sudo apt install -y perl sqlite3 pipx python3
+# sudo apt update
+# sudo apt install -y perl sqlite3 pipx python3
 
 pipx install streamlit || true
 pipx inject streamlit pandas plotly
 
 # -----------------------------
-# 2. Clean CSV
+# 2. Clean CSV & Report Missing Values
 # -----------------------------
 
-perl -pe 's/"([^"]*)"/my $s=$1; $s=~s@,@;@g; $s/ge' steam.csv > steam_clean.csv
-sed -i 's/\r$//' steam_clean.csv
+echo "=== Step 1: Cleaning CSV ==="
+perl -pe 's/"([^"]*)"/my $s=$1; $s=~s@,@;@g; $s/ge' steam.csv | sed 's/\r$//' > steam_temp.csv
+echo "✓ Quotes cleaned and line endings normalized"
 
-# -----------------------------
-# 3. Find missing values (report)
-# -----------------------------
+echo ""
+echo "=== Step 2: Missing Values Report ==="
 awk -F',' '
 NR==1 {
     for(i=1; i<=NF; i++) { header[i]=$i; missing[i]=0 }
@@ -38,25 +38,106 @@ END{
     print "Total rows:", total
     for(i=1;i<=max_cols;i++)
         printf "Column %d (%s): %d missing\n", i, header[i], missing[i]
-}' steam_clean.csv
+}' steam_temp.csv
 
 # -----------------------------
-# 4. Remove rows with missing values
+# 3. Remove rows with missing values
 # -----------------------------
+echo ""
+echo "=== Step 3: Removing rows with missing values ==="
 awk -F',' '
 NR==1 {print; next}
 {
+  skip=0
   for(i=1;i<=NF;i++)
     if($i=="" || $i~/^[[:space:]]*$/ || $i=="NA" || $i=="NaN" ||
        $i=="null" || $i=="NULL" || $i=="None" ||
-       $i=="[]" || $i=="{}" || $i=="()" || $i=="N/A" || $i=="n/a")
-      next
-  print
-}' steam_clean.csv > steam_script.csv
+       $i=="[]" || $i=="{}" || $i=="()" || $i=="N/A" || $i=="n/a") {
+      skip=1
+      break
+    }
+  if(!skip) print
+}' steam_temp.csv > steam_script.csv
+
+rm steam_temp.csv
+
+final_rows=$(wc -l < steam_script.csv)
+echo "✓ Final dataset: $((final_rows - 1)) rows (excluding header)"
+echo "✓ Cleaned file saved: steam_script.csv"
+
+# -----------------------------
+# 4. Schema Validation
+# -----------------------------
+echo ""
+echo "=== Step 4: Schema Validation ==="
+
+awk -F',' '
+NR==1 {next}
+{
+    # Column count
+    if(NF!=10) invalid_cols++
+    
+    # appid validation
+    if($1 !~ /^[0-9]+$/) invalid_appid++
+    
+    # release_year validation
+    if($3 < 2000 || $3 > 2030) invalid_year++
+    
+    # price validation
+    if($7 !~ /^[0-9]+(\.[0-9]+)?$/) invalid_price++
+    
+    # recommendations validation
+    if($8 !~ /^[0-9]+$/) invalid_rec++
+    
+    # Store appids for uniqueness check
+    appids[$1]++
+}
+END {
+    print "Column count validation:"
+    if(invalid_cols > 0)
+        print "  ⚠ Warning: Found " invalid_cols " rows with incorrect column count"
+    else
+        print "  ✓ All rows have 10 columns"
+    
+    print "appid validation:"
+    if(invalid_appid > 0)
+        print "  ⚠ Warning: Found " invalid_appid " non-numeric appid values"
+    else
+        print "  ✓ All appid values are numeric"
+    
+    print "release_year validation:"
+    if(invalid_year > 0)
+        print "  ⚠ Warning: Found " invalid_year " invalid year values"
+    else
+        print "  ✓ All release_year values are valid (2000-2030)"
+    
+    print "price validation:"
+    if(invalid_price > 0)
+        print "  ⚠ Warning: Found " invalid_price " non-numeric price values"
+    else
+        print "  ✓ All price values are numeric"
+    
+    print "recommendations validation:"
+    if(invalid_rec > 0)
+        print "  ⚠ Warning: Found " invalid_rec " non-numeric recommendation values"
+    else
+        print "  ✓ All recommendation values are numeric"
+    
+    print "appid uniqueness:"
+    dup_count=0
+    for(id in appids)
+        if(appids[id] > 1) dup_count++
+    if(dup_count > 0)
+        print "  ⚠ Warning: Found " dup_count " duplicate appid values"
+    else
+        print "  ✓ All appid values are unique"
+}' steam_script.csv
 
 # -----------------------------
 # 5. Create SQLite tables
 # -----------------------------
+echo ""
+echo "=== Step 5: Creating SQLite database ==="
 sqlite3 analysis.db <<EOF
 DROP TABLE IF EXISTS counts;
 CREATE TABLE counts (metric TEXT PRIMARY KEY, value INTEGER);
@@ -94,175 +175,197 @@ CREATE TABLE controller_support (release_year INTEGER, controller_games INTEGER,
 DROP TABLE IF EXISTS indie_vs_non_indie;
 CREATE TABLE indie_vs_non_indie (category TEXT, avg_price REAL, game_count INTEGER);
 EOF
+echo "✓ Database tables created"
 
 # -----------------------------
-# 6. Populate counts
+# 6. Compute all aggregations (OPTIMIZED)
 # -----------------------------
-wc -l steam_script.csv | awk '{print $1-1}' \
-| awk '{print "INSERT INTO counts VALUES (\"total_games\", "$1");"}' | sqlite3 analysis.db
+echo ""
+echo "=== Step 6: Computing all aggregations ==="
 
-cut -d',' -f5 steam_script.csv | tr ';' '\n' | sed '1d' | sed 's/^ *//;s/ *$//' | grep -v '^$' | sort -u | wc -l \
-| awk '{print "INSERT INTO counts VALUES (\"num_genres\", "$1");"}' | sqlite3 analysis.db
+# Single AWK pass for multiple computations
+echo "Computing counts, distributions, and trends in combined passes..."
 
-cut -d',' -f6 steam_script.csv | tr ';' '\n' | sed '1d' | sed 's/^ *//;s/ *$//' | grep -v '^$' | sort -u | wc -l \
-| awk '{print "INSERT INTO counts VALUES (\"num_categories\", "$1");"}' | sqlite3 analysis.db
-
-cut -d',' -f9 steam_script.csv | sed '1d' | sort -u | wc -l \
-| awk '{print "INSERT INTO counts VALUES (\"num_developers\", "$1");"}' | sqlite3 analysis.db
-
-cut -d',' -f10 steam_script.csv | sed '1d' | sort -u | wc -l \
-| awk '{print "INSERT INTO counts VALUES (\"num_publishers\", "$1");"}' | sqlite3 analysis.db
-
-awk -F',' 'NR>1 && $7==0 {c++} END{print c}' steam_script.csv \
-| awk '{print "INSERT INTO counts VALUES (\"num_free_games\", "$1");"}' | sqlite3 analysis.db
-
-awk -F',' 'NR>1 && $7>0 {c++} END{print c}' steam_script.csv \
-| awk '{print "INSERT INTO counts VALUES (\"num_paid_games\", "$1");"}' | sqlite3 analysis.db
-
-# Self-published count
-awk -F',' 'NR>1 {if($9==$10) self++; total++} END{print self}' steam_script.csv \
-| awk '{print "INSERT INTO counts VALUES (\"self_published\", "$1");"}' | sqlite3 analysis.db
-
-awk -F',' 'NR>1 {if($9!=$10) ext++} END{print ext}' steam_script.csv \
-| awk '{print "INSERT INTO counts VALUES (\"external_published\", "$1");"}' | sqlite3 analysis.db
-
-# -----------------------------
-# 7. Price brackets
-# -----------------------------
-awk -F',' 'NR>1{
- p=$7
- if(p==0) r="Free"
- else if(p<=2) r="0.49–2.00"
- else if(p<=5) r="2.01–5.00"
- else if(p<=10) r="5.01–10.00"
- else if(p<=20) r="10.01–20.00"
- else if(p<=40) r="20.01–40.00"
- else if(p<=60) r="40.01–60.00"
- else if(p<=100) r="60.01–100.00"
- else r="100+"
- count[r]++
+# Pass 1: Basic counts, price brackets, temporal data, trends (single file read)
+awk -F',' '
+NR==1 {next}
+{
+    total_games++
+    
+    # Developer and publisher tracking
+    devs[$9]++
+    pubs[$10]++
+    
+    # Free vs Paid
+    if($7==0) {
+        free_games++
+    } else {
+        paid_games++
+    }
+    
+    # Self vs External publishing
+    if($9==$10) self_pub++
+    else ext_pub++
+    
+    # Price brackets
+    p=$7
+    if(p==0) price_bracket["Free"]++
+    else if(p<=2) price_bracket["0.49–2.00"]++
+    else if(p<=5) price_bracket["2.01–5.00"]++
+    else if(p<=10) price_bracket["5.01–10.00"]++
+    else if(p<=20) price_bracket["10.01–20.00"]++
+    else if(p<=40) price_bracket["20.01–40.00"]++
+    else if(p<=60) price_bracket["40.01–60.00"]++
+    else if(p<=100) price_bracket["60.01–100.00"]++
+    else price_bracket["100+"]++
+    
+    # Games by year
+    year=$3
+    games_by_year[year]++
+    
+    # Year-month
+    split($4,date_parts," ")
+    month=date_parts[1]
+    year_month[year","month]++
+    
+    # Price by year for median calculation
+    prices_by_year[year]=prices_by_year[year]" "$7
+    
+    # Free-to-play trend
+    total_by_year[year]++
+    if($7==0) free_by_year[year]++
+    
+    # Controller support
+    if($6 ~ /[Cc]ontroller/ || $6 ~ /[Gg]amepad/) controller_by_year[year]++
+    
+    # Indie vs Non-Indie
+    if($5 ~ /Indie/) {
+        indie_sum+=$7
+        indie_count++
+    } else {
+        non_indie_sum+=$7
+        non_indie_count++
+    }
+    
+    # Genre combinations
+    gsub(/;/,", ",$5)
+    genre_combos[$5]++
+    
+    # Parse genres for individual counts and free genres
+    split($5,genres,", ")
+    for(i in genres) {
+        g=genres[i]
+        gsub(/^[ \t]+|[ \t]+$/,"",g)
+        if(g!="") {
+            genre_list[g]++
+            if($7==0) free_genre_list[g]++
+        }
+    }
+    
+    # Parse categories
+    split($6,cats,";")
+    for(i in cats) {
+        c=cats[i]
+        gsub(/^[ \t]+|[ \t]+$/,"",c)
+        if(c!="") category_list[c]++
+    }
 }
-END{for(r in count) print "INSERT INTO price_brackets VALUES (\""r"\","count[r]");"}' \
-steam_script.csv | sqlite3 analysis.db
-
-# -----------------------------
-# 8. Genres & Categories
-# -----------------------------
-cut -d',' -f5 steam_script.csv | tr ';' '\n' | sed '1d' | sed 's/^ *//;s/ *$//' | grep -v '^$' \
-| sort | uniq -c | awk '{print "INSERT INTO genre_counts VALUES (\"" $2 "\"," $1 ");"}' \
-| sqlite3 analysis.db
-
-cut -d',' -f6 steam_script.csv | tr ';' '\n' | sed '1d' | sed 's/^ *//;s/ *$//' | grep -v '^$' \
-| sort | uniq -c | awk '{print "INSERT INTO category_counts VALUES (\"" $2 "\"," $1 ");"}' \
-| sqlite3 analysis.db
-
-# -----------------------------
-# 9. Year & Year-Month
-# -----------------------------
-awk -F',' 'NR>1{c[$3]++} END{for(y in c) print "INSERT INTO games_by_year VALUES ("y","c[y]");"}' \
-steam_script.csv | sqlite3 analysis.db
-
-awk -F',' 'NR>1{
- split($4,a," ")
- ym[$3","a[1]]++
-}
-END{
- for(k in ym){split(k,b,","); print "INSERT INTO games_by_year_month VALUES ("b[1]",\""b[2]"\","ym[k]");"}
+END {
+    # Write counts
+    print "INSERT INTO counts VALUES (\"total_games\", "total_games");"
+    print "INSERT INTO counts VALUES (\"num_genres\", "length(genre_list)");"
+    print "INSERT INTO counts VALUES (\"num_categories\", "length(category_list)");"
+    print "INSERT INTO counts VALUES (\"num_developers\", "length(devs)");"
+    print "INSERT INTO counts VALUES (\"num_publishers\", "length(pubs)");"
+    print "INSERT INTO counts VALUES (\"num_free_games\", "free_games");"
+    print "INSERT INTO counts VALUES (\"num_paid_games\", "paid_games");"
+    print "INSERT INTO counts VALUES (\"self_published\", "self_pub");"
+    print "INSERT INTO counts VALUES (\"external_published\", "ext_pub");"
+    
+    # Write price brackets
+    for(r in price_bracket)
+        print "INSERT INTO price_brackets VALUES (\""r"\","price_bracket[r]");"
+    
+    # Write games by year
+    for(y in games_by_year)
+        print "INSERT INTO games_by_year VALUES ("y","games_by_year[y]");"
+    
+    # Write year-month
+    for(ym in year_month) {
+        split(ym,parts,",")
+        print "INSERT INTO games_by_year_month VALUES ("parts[1]",\""parts[2]"\","year_month[ym]");"
+    }
+    
+    # Write free-to-play trend
+    for(y in total_by_year) {
+        free_count=(free_by_year[y] ? free_by_year[y] : 0)
+        pct=(free_count/total_by_year[y])*100
+        print "INSERT INTO free_to_play_trend VALUES ("y","free_count","total_by_year[y]","pct");"
+    }
+    
+    # Write controller support
+    for(y in total_by_year) {
+        ctrl_count=(controller_by_year[y] ? controller_by_year[y] : 0)
+        pct=(ctrl_count/total_by_year[y])*100
+        print "INSERT INTO controller_support VALUES ("y","ctrl_count","total_by_year[y]","pct");"
+    }
+    
+    # Write indie vs non-indie
+    if(indie_count > 0) {
+        indie_avg=indie_sum/indie_count
+        print "INSERT INTO indie_vs_non_indie VALUES (\"Indie\","indie_avg","indie_count");"
+    }
+    if(non_indie_count > 0) {
+        non_indie_avg=non_indie_sum/non_indie_count
+        print "INSERT INTO indie_vs_non_indie VALUES (\"Non-Indie\","non_indie_avg","non_indie_count");"
+    }
+    
+    # Write genre counts
+    for(g in genre_list)
+        print "INSERT INTO genre_counts VALUES (\""g"\","genre_list[g]");"
+    
+    # Write category counts
+    for(c in category_list)
+        print "INSERT INTO category_counts VALUES (\""c"\","category_list[c]");"
+    
+    # Write free genres
+    for(g in genre_list) {
+        free_count=(free_genre_list[g] ? free_genre_list[g] : 0)
+        pct=(free_count/genre_list[g])*100
+        print "INSERT INTO free_genres VALUES (\""g"\","free_count","genre_list[g]","pct");"
+    }
 }' steam_script.csv | sqlite3 analysis.db
 
-# -----------------------------
-# 10. Median Price by Year
-# -----------------------------
+# Pass 2: Median price by year (requires sorting, separate pass)
+echo "Computing median prices..."
 awk -F',' 'NR>1 {prices[$3]=prices[$3]" "$7} END {for(y in prices) print y, prices[y]}' steam_script.csv | \
 while read year prices; do
   median=$(echo "$prices" | tr ' ' '\n' | sort -n | awk '{a[NR]=$1} END {print a[int(NR/2+0.5)]}')
   echo "INSERT INTO median_price_by_year VALUES ($year, $median);"
 done | sqlite3 analysis.db
 
-# -----------------------------
-# 11. Free-to-Play Trend
-# -----------------------------
-awk -F',' 'NR>1 {
-  year=$3
-  if($7==0) free[year]++
-  total[year]++
-}
-END {
-  for(y in total) {
-    pct=(free[y]/total[y])*100
-    print "INSERT INTO free_to_play_trend VALUES ("y","free[y]","total[y]","pct");"
-  }
-}' steam_script.csv | sqlite3 analysis.db
-
-# -----------------------------
-# 12. Genre Combinations (Top 20)
-# -----------------------------
+# Pass 3: Top 20 genre combinations (requires sorting, separate pass)
+echo "Computing top genre combinations..."
 awk -F',' 'NR>1 {
   gsub(/;/,", ",$5)
   combos[$5]++
 }
 END {
   for(c in combos) print combos[c]"\t"c
-}' steam_script.csv | sort -nr | head -20 | \
+}' steam_script.csv | sort -rn | head -20 | \
 awk -F'\t' '{gsub(/"/,"\"\"",$2); print "INSERT INTO genre_combinations VALUES (\""$2"\"," $1 ");"}' | \
 sqlite3 analysis.db
 
-# -----------------------------
-# 13. Free-to-Play Genres
-# -----------------------------
-awk -F',' 'NR>1 {
-  split($5,genres,";")
-  for(i in genres) {
-    gsub(/^[ \t]+|[ \t]+$/,"",genres[i])
-    if(genres[i]!="") {
-      total_g[genres[i]]++
-      if($7==0) free_g[genres[i]]++
-    }
-  }
-}
-END {
-  for(g in total_g) {
-    free_count = (free_g[g] ? free_g[g] : 0)
-    pct=(free_count/total_g[g])*100
-    gsub(/"/,"\"\"",g)
-    print "INSERT INTO free_genres VALUES (\""g"\","free_count","total_g[g]","pct");"
-  }
-}' steam_script.csv | sqlite3 analysis.db
+echo ""
+echo "✓ All aggregations completed!"
+echo "Database file: analysis.db"
+echo "Tables populated: 12"
+echo ""
 
 # -----------------------------
-# 14. Controller Support Over Time
+# 7. Create and launch Streamlit dashboard
 # -----------------------------
-awk -F',' 'NR>1 {
-  year=$3
-  total[year]++
-  if($6 ~ /[Cc]ontroller/ || $6 ~ /[Gg]amepad/) controller[year]++
-}
-END {
-  for(y in total) {
-    pct=(controller[y]/total[y])*100
-    print "INSERT INTO controller_support VALUES ("y","controller[y]","total[y]","pct");"
-  }
-}' steam_script.csv | sqlite3 analysis.db
-
-# -----------------------------
-# 15. Indie vs Non-Indie Average Price
-# -----------------------------
-awk -F',' 'NR>1 {
-  if($5 ~ /Indie/) {indie_sum+=$7; indie_count++}
-  else {non_indie_sum+=$7; non_indie_count++}
-}
-END {
-  indie_avg=indie_sum/indie_count
-  non_indie_avg=non_indie_sum/non_indie_count
-  print "INSERT INTO indie_vs_non_indie VALUES (\"Indie\","indie_avg","indie_count");"
-  print "INSERT INTO indie_vs_non_indie VALUES (\"Non-Indie\","non_indie_avg","non_indie_count");"
-}' steam_script.csv | sqlite3 analysis.db
-
-echo "Database populated with all analytics!"
-
-# -----------------------------
-# 16. Enhanced Streamlit Dashboard
-# -----------------------------
+echo "=== Step 7: Creating Streamlit dashboard ==="
 cat > app.py <<'EOFAPP'
 import sqlite3
 import pandas as pd
@@ -270,10 +373,8 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Page config
 st.set_page_config(layout="wide", page_title="Steam Games Analytics")
 
-# Custom CSS
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 0rem;}
@@ -310,14 +411,11 @@ def load(q):
     with sqlite3.connect("analysis.db") as c:
         return pd.read_sql(q, c)
 
-# Title
 st.title("🎮 Steam Games Analytics Dashboard")
 
-# Load data
 counts = load("SELECT * FROM counts")
 counts_dict = dict(zip(counts['metric'], counts['value']))
 
-# Row 1: Metrics
 cols = st.columns(9)
 metrics = [
     ("Total Games", "total_games", "🎯"),
@@ -327,7 +425,7 @@ metrics = [
     ("Developers", "num_developers", "👨‍💻"),
     ("Free Games", "num_free_games", "🆓"),
     ("Paid Games", "num_paid_games", "💰"),
-    ("Self-Pub", "self_published", "📝"),
+    ("Self-Pub", "self_published", "📦"),
     ("Ext-Pub", "external_published", "🤝")
 ]
 for col, (label, key, icon) in zip(cols, metrics):
@@ -335,14 +433,14 @@ for col, (label, key, icon) in zip(cols, metrics):
 
 st.markdown("---")
 
-# Row 2: Main visuals
 col1, col2, col3, col4 = st.columns([1.2, 1, 1, 1])
 
 with col1:
     st.subheader("📊 Games Released Over Time")
     by_year = load("SELECT * FROM games_by_year ORDER BY release_year")
-    fig = px.area(by_year, x='release_year', y='game_count', color_discrete_sequence=['#1f77b4'])
-    fig.update_layout(height=260, margin=dict(l=10,r=10,t=10,b=30), xaxis_title="Year", yaxis_title="Games", showlegend=False)
+    by_year['cumulative_games'] = by_year['game_count'].cumsum()
+    fig = px.area(by_year, x='release_year', y='cumulative_games', color_discrete_sequence=['#1f77b4'])
+    fig.update_layout(height=260, margin=dict(l=10,r=10,t=10,b=30), xaxis_title="Year", yaxis_title="Cumulative Games", showlegend=False)
     st.plotly_chart(fig, width='stretch')
 
 with col2:
@@ -352,14 +450,14 @@ with col2:
     price_dist['price_range'] = pd.Categorical(price_dist['price_range'], categories=price_order, ordered=True)
     price_dist = price_dist.sort_values('price_range')
     fig = px.bar(price_dist, x='price_range', y='game_count', color='game_count', color_continuous_scale='Blues')
-    fig.update_layout(height=260, margin=dict(l=10,r=10,t=10,b=30), showlegend=False, xaxis_tickangle=-45)
+    fig.update_layout(height=260, margin=dict(l=10,r=10,t=10,b=30), showlegend=False, xaxis_tickangle=-45, xaxis_title="Price Range", yaxis_title="Number of Games")
     fig.update_coloraxes(showscale=False)
     st.plotly_chart(fig, width='stretch')
 
 with col3:
     st.subheader("🆓 Free vs Paid")
     free_paid = pd.DataFrame({'Type': ['Free', 'Paid'], 'Count': [counts_dict.get('num_free_games', 0), counts_dict.get('num_paid_games', 0)]})
-    fig = px.pie(free_paid, values='Count', names='Type', color='Type', color_discrete_map={'Free': '#2ecc71', 'Paid': '#e74c3c'})
+    fig = px.pie(free_paid, values='Count', names='Type', color='Type', color_discrete_map={'Free': '#90EE90', 'Paid': '#87CEEB'})
     fig.update_traces(textposition='inside', textinfo='percent+label')
     fig.update_layout(height=260, margin=dict(l=10,r=10,t=10,b=10), showlegend=False)
     st.plotly_chart(fig, width='stretch')
@@ -374,7 +472,6 @@ with col4:
 
 st.markdown("---")
 
-# Row 3: Advanced analytics
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -400,7 +497,6 @@ with col3:
 
 st.markdown("---")
 
-# Row 4: Genres and categories
 col1, col2, col3 = st.columns([1, 1, 1.2])
 
 with col1:
@@ -429,7 +525,6 @@ with col3:
 
 st.markdown("---")
 
-# Row 5: Genre combinations
 st.subheader("🔀 Top 15 Genre Combinations")
 genre_combos = load("SELECT * FROM genre_combinations ORDER BY game_count DESC LIMIT 15")
 fig = px.bar(genre_combos, x='game_count', y='genre_combo', orientation='h', color='game_count', color_continuous_scale='Blues')
@@ -437,12 +532,11 @@ fig.update_layout(height=400, margin=dict(l=10,r=10,t=10,b=30), xaxis_title="Gam
 fig.update_coloraxes(showscale=False)
 st.plotly_chart(fig, width='stretch')
 
-# Footer
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #888; font-size: 0.85rem;'>Steam Games Analytics Dashboard | Shell + SQLite + Streamlit + Plotly</div>", unsafe_allow_html=True)
 EOFAPP
 
-# -----------------------------
-# 17. Run Streamlit
-# -----------------------------
+echo "✓ Dashboard created: app.py"
+echo ""
+echo "=== Launching Streamlit dashboard ==="
 streamlit run app.py
