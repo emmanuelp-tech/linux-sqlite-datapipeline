@@ -1,6 +1,8 @@
 # linux-sqlite-datapipeline
 Linux-based data pipeline using shell tools for CSV cleaning, aggregation, SQLite storage, and local Streamlit visualization.
 
+<img width="1882" height="1007" alt="dashboard" src="https://github.com/user-attachments/assets/c4630718-836e-4bc8-91d6-7e78127b0dbf" />
+
 
 # Steam Games Dataset — Linux-First Data Pipeline Documentation
 
@@ -21,32 +23,15 @@ Linux-based data pipeline using shell tools for CSV cleaning, aggregation, SQLit
 * * *
 
 ## Project Overview
-
-This notebook accompanies a **Linux shell–based data pipeline** built for analyzing a real-world Steam games dataset from Kaggle. Instead of using pandas for the entire workflow, this project deliberately focuses on **Unix command-line tools** (`awk`, `sed`, `cut`, `sort`, `uniq`, `perl`) for data cleaning and aggregation, with results stored in **SQLite** and visualized locally using **Streamlit**.
+This is a **Linux shell–based data pipeline** built for analyzing a real-world Steam games dataset from Kaggle. Instead of using pandas for the entire workflow, this project focuses on **Unix command-line tools** (`awk`, `sed`, `cut`, `sort`, `uniq`, `perl`) for data cleaning and aggregation, with results stored in **SQLite** and visualized locally using **Streamlit**.
 
 ### Project Goals
-
-- Clean and validate a large CSV dataset using **Linux shell tools**
-- Handle quoted fields, encoding issues, and missing values correctly
-- Perform meaningful aggregations without loading the full dataset into memory
-- Store analysis results in **SQLite** for reuse
-- Visualize aggregated results using **Streamlit** (run locally)
-
+Create **a single script** file that cleans, validates, transforms a csv file, loads results of analysis into a database and creates a dashboard on streamlit.
 This project was extended beyond a basic assignment to explore how **lightweight, composable tools** can be combined into a full analysis pipeline.
 
-### What This Notebook Contains
-
-- This notebook **does not execute the full pipeline**
-- Instead, it **includes the full shell script** used to:
-    - clean the dataset
-    - validate missing values
-    - aggregate key metrics
-    - populate SQLite tables
-    - launch a Streamlit dashboard locally
-
-The Streamlit app is meant to be run **on a local machine**, not inside Kaggle.
 
 ### Pipeline Overview
+(for complete technical details look up below sections 3,4 and 5)
 
 **1\. Data Cleaning (Shell)**
 
@@ -79,6 +64,7 @@ Aggregated results are stored in SQLite tables such as:
 - `games_by_year_month`
 
 This avoids recomputation and keeps the visualization layer lightweight.
+Furthur, a few but important optimisations have been made to reduce number of data passes.
 
 **4\. Visualization (Streamlit — Local)**
 
@@ -107,13 +93,11 @@ A Streamlit app reads directly from SQLite and displays:
 **Requirements:**
 
 - Linux (Ubuntu / KDE Neon)
-- `perl`, `sqlite3`, `pipx`, `python3`
-- Streamlit installed via `pipx`
+- script handles other requirements
 
 ### Dataset Source
 
 This project uses the **Steam Games Dataset (2021–2025)** sourced from Kaggle.
-
 Source: https://www.kaggle.com/datasets/jypenpen54534/steam-games-dataset-2021-2025-65k
 
 * * *
@@ -195,29 +179,14 @@ NR==1 {
 }
 {
     for(i=1; i<=max_cols; i++) {
-        if($i == "" || 
-           $i ~ /^[[:space:]]*$/ || 
-           $i == "NA" || 
-           $i == "NaN" || 
-           $i == "null" || 
-           $i == "NULL" || 
-           $i == "None" ||
-           $i == "[]" ||
-           $i == "{}" ||
-           $i == "()" ||
-           $i == "N/A" ||
-           $i == "n/a") {
+        if($i == "" || $i ~ /^[[:space:]]*$/ || 
+           $i == "NA" || $i == "NaN" || $i == "null" || 
+           $i == "NULL" || $i == "None" || $i == "[]" ||
+           $i == "{}" || $i == "()" ||
+           $i == "N/A" || $i == "n/a") {
             missing[i]++
         }
-    }
-    total++
-}
-END {
-    print "Total rows:", total
-    print "\nMissing values per column:"
-    for(i=1; i<=max_cols; i++) {
-        printf "Column %d (%s): %d missing (%.2f%%)\n", i, header[i], missing[i], (missing[i]/total)*100
-    }
+    } total++
 }' steam_clean.csv
 ```
 
@@ -231,8 +200,7 @@ END {
     - Empty strings or whitespace-only fields
     - Standard null representations: `NA`, `NaN`, `null`, `NULL`, `None`, `N/A`, `n/a`
     - Empty containers: `[]`, `{}`, `()`
-- **Output** (`END` block): Reports total row count and per-column missing value counts with column names
-
+      
 **Result:** Data quality summary identifying columns requiring imputation or cleaning strategies prior to database ingestion.
 
 ### Row-Level Data Cleaning
