@@ -76,19 +76,19 @@ NR==1 {next}
 {
     # Column count
     if(NF!=10) invalid_cols++
-    
+
     # appid validation
     if($1 !~ /^[0-9]+$/) invalid_appid++
-    
+
     # release_year validation
     if($3 < 2000 || $3 > 2030) invalid_year++
-    
+
     # price validation
     if($7 !~ /^[0-9]+(\.[0-9]+)?$/) invalid_price++
-    
+
     # recommendations validation
     if($8 !~ /^[0-9]+$/) invalid_rec++
-    
+
     # Store appids for uniqueness check
     appids[$1]++
 }
@@ -98,31 +98,31 @@ END {
         print "  ⚠ Warning: Found " invalid_cols " rows with incorrect column count"
     else
         print "  ✓ All rows have 10 columns"
-    
+
     print "appid validation:"
     if(invalid_appid > 0)
         print "  ⚠ Warning: Found " invalid_appid " non-numeric appid values"
     else
         print "  ✓ All appid values are numeric"
-    
+
     print "release_year validation:"
     if(invalid_year > 0)
         print "  ⚠ Warning: Found " invalid_year " invalid year values"
     else
         print "  ✓ All release_year values are valid (2000-2030)"
-    
+
     print "price validation:"
     if(invalid_price > 0)
         print "  ⚠ Warning: Found " invalid_price " non-numeric price values"
     else
         print "  ✓ All price values are numeric"
-    
+
     print "recommendations validation:"
     if(invalid_rec > 0)
         print "  ⚠ Warning: Found " invalid_rec " non-numeric recommendation values"
     else
         print "  ✓ All recommendation values are numeric"
-    
+
     print "appid uniqueness:"
     dup_count=0
     for(id in appids)
@@ -191,22 +191,22 @@ awk -F',' '
 NR==1 {next}
 {
     total_games++
-    
+
     # Developer and publisher tracking
     devs[$9]++
     pubs[$10]++
-    
+
     # Free vs Paid
     if($7==0) {
         free_games++
     } else {
         paid_games++
     }
-    
+
     # Self vs External publishing
     if($9==$10) self_pub++
     else ext_pub++
-    
+
     # Price brackets
     p=$7
     if(p==0) price_bracket["Free"]++
@@ -218,26 +218,26 @@ NR==1 {next}
     else if(p<=60) price_bracket["40.01–60.00"]++
     else if(p<=100) price_bracket["60.01–100.00"]++
     else price_bracket["100+"]++
-    
+
     # Games by year
     year=$3
     games_by_year[year]++
-    
+
     # Year-month
     split($4,date_parts," ")
     month=date_parts[1]
     year_month[year","month]++
-    
+
     # Price by year for median calculation
     prices_by_year[year]=prices_by_year[year]" "$7
-    
+
     # Free-to-play trend
     total_by_year[year]++
     if($7==0) free_by_year[year]++
-    
+
     # Controller support
     if($6 ~ /[Cc]ontroller/ || $6 ~ /[Gg]amepad/) controller_by_year[year]++
-    
+
     # Indie vs Non-Indie
     if($5 ~ /Indie/) {
         indie_sum+=$7
@@ -246,11 +246,11 @@ NR==1 {next}
         non_indie_sum+=$7
         non_indie_count++
     }
-    
+
     # Genre combinations
     gsub(/;/,", ",$5)
     genre_combos[$5]++
-    
+
     # Parse genres for individual counts and free genres
     split($5,genres,", ")
     for(i in genres) {
@@ -261,7 +261,7 @@ NR==1 {next}
             if($7==0) free_genre_list[g]++
         }
     }
-    
+
     # Parse categories
     split($6,cats,";")
     for(i in cats) {
@@ -281,35 +281,35 @@ END {
     print "INSERT INTO counts VALUES (\"num_paid_games\", "paid_games");"
     print "INSERT INTO counts VALUES (\"self_published\", "self_pub");"
     print "INSERT INTO counts VALUES (\"external_published\", "ext_pub");"
-    
+
     # Write price brackets
     for(r in price_bracket)
         print "INSERT INTO price_brackets VALUES (\""r"\","price_bracket[r]");"
-    
+
     # Write games by year
     for(y in games_by_year)
         print "INSERT INTO games_by_year VALUES ("y","games_by_year[y]");"
-    
+
     # Write year-month
     for(ym in year_month) {
         split(ym,parts,",")
         print "INSERT INTO games_by_year_month VALUES ("parts[1]",\""parts[2]"\","year_month[ym]");"
     }
-    
+
     # Write free-to-play trend
     for(y in total_by_year) {
         free_count=(free_by_year[y] ? free_by_year[y] : 0)
         pct=(free_count/total_by_year[y])*100
         print "INSERT INTO free_to_play_trend VALUES ("y","free_count","total_by_year[y]","pct");"
     }
-    
+
     # Write controller support
     for(y in total_by_year) {
         ctrl_count=(controller_by_year[y] ? controller_by_year[y] : 0)
         pct=(ctrl_count/total_by_year[y])*100
         print "INSERT INTO controller_support VALUES ("y","ctrl_count","total_by_year[y]","pct");"
     }
-    
+
     # Write indie vs non-indie
     if(indie_count > 0) {
         indie_avg=indie_sum/indie_count
@@ -319,15 +319,15 @@ END {
         non_indie_avg=non_indie_sum/non_indie_count
         print "INSERT INTO indie_vs_non_indie VALUES (\"Non-Indie\","non_indie_avg","non_indie_count");"
     }
-    
+
     # Write genre counts
     for(g in genre_list)
         print "INSERT INTO genre_counts VALUES (\""g"\","genre_list[g]");"
-    
+
     # Write category counts
     for(c in category_list)
         print "INSERT INTO category_counts VALUES (\""c"\","category_list[c]");"
-    
+
     # Write free genres
     for(g in genre_list) {
         free_count=(free_genre_list[g] ? free_genre_list[g] : 0)
@@ -380,26 +380,26 @@ st.markdown("""
     .block-container {padding-top: 1rem; padding-bottom: 0rem;}
     h1 {font-size: 2rem; margin-bottom: 0.5rem;}
     h2 {font-size: 1.2rem; margin-top: 0.5rem; margin-bottom: 0.3rem;}
-    
+
     [data-testid="metric-container"] {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
         padding: 1rem !important;
         border-radius: 0.5rem !important;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
     }
-    
+
     [data-testid="stMetricLabel"] {
         color: rgba(255,255,255,0.95) !important;
         font-weight: 500 !important;
         font-size: 0.9rem !important;
     }
-    
+
     [data-testid="stMetricValue"] {
         font-size: 1.8rem !important;
         color: white !important;
         font-weight: 700 !important;
     }
-    
+
     [data-testid="metric-container"] * {
         color: white !important;
     }
@@ -533,10 +533,77 @@ fig.update_coloraxes(showscale=False)
 st.plotly_chart(fig, width='stretch')
 
 st.markdown("---")
+
+# Database Tables Section
+st.title("📊 Database Tables")
+st.markdown("Below are all the aggregated tables stored in the SQLite database.")
+
+# Get list of all tables
+with sqlite3.connect("analysis.db") as conn:
+    tables = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", conn)
+    table_list = tables['name'].tolist()
+
+# Create tabs for each table
+tabs = st.tabs(table_list)
+
+for tab, table_name in zip(tabs, table_list):
+    with tab:
+        st.subheader(f"Table: {table_name}")
+        df = load(f"SELECT * FROM {table_name}")
+
+        # Display row count
+        st.caption(f"Total rows: {len(df)}")
+
+        # Display the dataframe
+        st.dataframe(df, width='stretch', height=400)
+
+        # Add download button for each table
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=f"📥 Download {table_name} as CSV",
+            data=csv,
+            file_name=f"{table_name}.csv",
+            mime="text/csv",
+        )
+
+st.markdown("---")
+
+# Complete Dataset Section
+st.title("📋 Complete Dataset")
+st.markdown("The full cleaned dataset used for all analyses above.")
+
+# Load the complete CSV
+complete_df = pd.read_csv("steam_script.csv")
+
+st.caption(f"Total rows: {len(complete_df):,}")
+st.caption(f"Total columns: {len(complete_df.columns)}")
+
+# Display column info
+with st.expander("📌 View Column Information"):
+    col_info = pd.DataFrame({
+        'Column Name': complete_df.columns,
+        'Data Type': complete_df.dtypes.astype(str),
+        'Non-Null Count': complete_df.count().values,
+        'Sample Value': [str(complete_df[col].iloc[0]) if len(complete_df) > 0 else None for col in complete_df.columns]
+    })
+    st.dataframe(col_info, width='stretch')
+
+# Display the complete dataset
+st.dataframe(complete_df, width='stretch', height=500)
+
+# Download button for complete dataset
+csv_full = complete_df.to_csv(index=False).encode('utf-8')
+st.download_button(
+    label="📥 Download Complete Dataset as CSV",
+    data=csv_full,
+    file_name="steam_complete_dataset.csv",
+    mime="text/csv",
+)
+
+st.markdown("---")
 st.markdown("<div style='text-align: center; color: #888; font-size: 0.85rem;'>Steam Games Analytics Dashboard | Shell + SQLite + Streamlit + Plotly</div>", unsafe_allow_html=True)
 EOFAPP
 
 echo "✓ Dashboard created: app.py"
 echo ""
-echo "=== Launching Streamlit dashboard ==="
 streamlit run app.py
