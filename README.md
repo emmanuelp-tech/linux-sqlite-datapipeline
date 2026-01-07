@@ -1,7 +1,12 @@
 # linux-sqlite-datapipeline
+
+https://linux-app-datapipeline-nrwa6meyee3fystmxzorch.streamlit.app/
+
 Linux-based data pipeline using shell tools for CSV cleaning, aggregation, SQLite storage, and local Streamlit visualization.
 
 <img width="1882" height="1007" alt="dashboard" src="https://github.com/user-attachments/assets/c4630718-836e-4bc8-91d6-7e78127b0dbf" />
+<img width="1920" height="1080" alt="Screenshot_20260107_172421" src="https://github.com/user-attachments/assets/e726c52b-9f09-47f8-9ed3-f3a6ca1def64" />
+
 
 
 # Steam Games Dataset — Linux-First Data Pipeline Documentation
