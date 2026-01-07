@@ -1,6 +1,5 @@
 # linux-sqlite-datapipeline
-
-https://linux-app-datapipeline-nrwa6meyee3fystmxzorch.streamlit.app/
+https://steam-analysis01.streamlit.app/
 
 Linux-based data pipeline using shell tools for CSV cleaning, aggregation, SQLite storage, and local Streamlit visualization.
 
